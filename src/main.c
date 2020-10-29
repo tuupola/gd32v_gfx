@@ -34,12 +34,11 @@ SPDX-License-Identifier: MIT-0
 #include <semphr.h>
 #include <task.h>
 
-#include "clock_gettime.h"
 #include "hagl_hal.h"
 #include "bitmap.h"
 #include "hagl.h"
 #include "font6x9.h"
-// #include "fps.h"
+#include "fps.h"
 #include "aps.h"
 
 static char primitive[17][32] = {
@@ -118,13 +117,13 @@ void fps_task(void *params)
 #else
     while (1) {
         fx_fps = aps(drawn);
-        // //swprintf(message,  sizeof(message), L"%.*f %s PER SECOND       ", 0, fx_fps, primitive[current_demo]);
+        drawn = 0;
         swprintf(message,  sizeof(message), L"%.*f APS       ", 0, fx_fps);
         hagl_set_clip_window(0, 0, DISPLAY_WIDTH - 1, DISPLAY_HEIGHT - 1);
         hagl_put_text(message, 8, 4, color, font6x9);
         hagl_set_clip_window(0, 20, DISPLAY_WIDTH - 1, DISPLAY_HEIGHT - 21);
 
-        vTaskDelay(pdMS_TO_TICKS(2000));
+        vTaskDelay(pdMS_TO_TICKS(1000));
     }
 #endif
     vTaskDelete(NULL);
