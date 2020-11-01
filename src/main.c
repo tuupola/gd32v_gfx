@@ -62,8 +62,8 @@ static char primitive[17][32] = {
 };
 
 static SemaphoreHandle_t mutex;
-static float fb_fps;
-static float fx_fps;
+static float fb_fps = 0.0;
+static float fx_fps = 0.0;
 static uint16_t current_demo = 0;
 static bitmap_t *bb;
 static uint32_t drawn = 0;
@@ -112,7 +112,7 @@ void fps_task(void *params)
 
         hagl_set_clip_window(0, 20, DISPLAY_WIDTH - 1, DISPLAY_HEIGHT - 21);
 
-        vTaskDelay(1000 / portTICK_RATE_MS);
+        vTaskDelay(pdMS_TO_TICKS(1000));
     }
 #else
     while (1) {
@@ -132,7 +132,8 @@ void fps_task(void *params)
 void switch_task(void *params)
 {
     while (1) {
-        // ESP_LOGI(TAG, "%.*f %s per second, FB %.*f FPS", 0, fx_fps, primitive[current_demo], 1, fb_fps);
+        //printf("%.*f %s per second, FB %.*f FPS\r\n", 0, fx_fps, primitive[current_demo], 1, fb_fps);
+        printf("%d %s per second, FB %d FPS\r\n", (uint32_t)fx_fps, primitive[current_demo], (uint32_t)fb_fps);
 
         current_demo = (current_demo + 1) % 17;
         hagl_clear_clip_window();
@@ -370,28 +371,28 @@ void demo_task(void *params)
 
 void main()
 {
-    // ESP_LOGI(TAG, "SDK version: %s", esp_get_idf_version());
-    // ESP_LOGI(TAG, "Heap when starting: %d", esp_get_free_heap_size());
-
+    printf("Hello\r\n");
     bb = hagl_init();
     if (bb) {
-        // ESP_LOGI(TAG, "Back buffer: %dx%dx%d", bb->width, bb->height, bb->depth);
+        printf("Back buffer: %dx%dx%d\r\n", bb->width, bb->height, bb->depth);
+    } else {
+        printf("No back buffer\r\n");
+
     }
 
-    // ESP_LOGI(TAG, "Heap after HAGL init: %d", esp_get_free_heap_size());
     hagl_clear_screen();
     hagl_set_clip_window(0, 20, DISPLAY_WIDTH - 1, DISPLAY_HEIGHT - 21);
     mutex = xSemaphoreCreateMutex();
 
     if (NULL != mutex) {
 #ifdef HAGL_HAL_USE_BUFFERING
-        xTaskCreatePinnedToCore(framebuffer_task, "Framebuffer", 8192, NULL, 1, NULL, 0);
+        xTaskCreate(framebuffer_task, "Framebuffer", 256, NULL, 1, NULL);
 #endif
         xTaskCreate(demo_task, "Demo", 1152, NULL, 1, NULL);
         xTaskCreate(fps_task, "FPS", 256, NULL, 2, NULL);
         xTaskCreate(switch_task, "Switch", 128, NULL, 2, NULL);
     } else {
-        // ESP_LOGE(TAG, "No mutex?");
+        printf("Not mutex?\r\n");
     }
 
     vTaskStartScheduler();
