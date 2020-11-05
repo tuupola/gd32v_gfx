@@ -1,5 +1,5 @@
 TARGET = firmware
-RTOS = FreeRTOS
+# RTOS = FreeRTOS
 NUCLEI_SDK_ROOT = ../nuclei-sdk
 SRCDIRS = . src components/hagl/src components/hagl_gd32v_mipi/src
 INCDIRS = . include components/hagl/include components/hagl_gd32v_mipi/include

@@ -26,13 +26,12 @@ SPDX-License-Identifier: MIT-0
 */
 
 #include <stdio.h>
+
+#include "nuclei_sdk_soc.h"
+
 #include <stdlib.h>
-#include <string.h>
-#include <time.h>
+#include <stdbool.h>
 #include <wchar.h>
-#include <FreeRTOS.h>
-#include <semphr.h>
-#include <task.h>
 
 #include "hagl_hal.h"
 #include "bitmap.h"
@@ -61,90 +60,14 @@ static char primitive[17][32] = {
     "STRINGS"
 };
 
-static SemaphoreHandle_t mutex;
 static float fb_fps = 0.0;
 static float fx_fps = 0.0;
-static uint16_t current_demo = 0;
+static uint8_t current_demo = 0;
 static bitmap_t *bb;
 static uint32_t drawn = 0;
-
-/*
- * Flushes the framebuffer to display in a loop. This demo is
- * capped to 30 fps.
- */
-void framebuffer_task(void *params)
-{
-    TickType_t last;
-    const TickType_t frequency = 1000 / 30 / portTICK_PERIOD_MS;
-
-    last = xTaskGetTickCount();
-
-    while (1) {
-        xSemaphoreTake(mutex, portMAX_DELAY);
-        hagl_flush();
-        xSemaphoreGive(mutex);
-        // fb_fps = fps();
-        vTaskDelayUntil(&last, frequency);
-    }
-
-    vTaskDelete(NULL);
-}
-
-/*
- * Displays the info bar on top of the screen.
- */
-void fps_task(void *params)
-{
-    uint16_t color = hagl_color(0, 255, 0);
-    wchar_t message[16];
-
-#ifdef HAGL_HAL_USE_BUFFERING
-    while (1) {
-        fx_fps = aps(drawn);
-        drawn = 0;
-
-        hagl_set_clip_window(0, 0, DISPLAY_WIDTH - 1, DISPLAY_HEIGHT - 1);
-
-        swprintf(message, sizeof(message), L"%.*f %s PER SECOND       ", 0, fx_fps, primitive[current_demo]);
-        hagl_put_text(message, 6, 4, color, font6x9);
-        swprintf(message, sizeof(message), L"%.*f FPS  ", 1, fb_fps);
-        hagl_put_text(message, DISPLAY_WIDTH - 56, DISPLAY_HEIGHT - 14, color, font6x9);
-
-        hagl_set_clip_window(0, 20, DISPLAY_WIDTH - 1, DISPLAY_HEIGHT - 21);
-
-        vTaskDelay(pdMS_TO_TICKS(1000));
-    }
-#else
-    while (1) {
-        fx_fps = aps(drawn);
-        drawn = 0;
-        swprintf(message,  sizeof(message), L"%.*f APS       ", 0, fx_fps);
-        hagl_set_clip_window(0, 0, DISPLAY_WIDTH - 1, DISPLAY_HEIGHT - 1);
-        hagl_put_text(message, 8, 4, color, font6x9);
-        hagl_set_clip_window(0, 20, DISPLAY_WIDTH - 1, DISPLAY_HEIGHT - 21);
-
-        vTaskDelay(pdMS_TO_TICKS(1000));
-    }
-#endif
-    vTaskDelete(NULL);
-}
-
-void switch_task(void *params)
-{
-    while (1) {
-        //printf("%.*f %s per second, FB %.*f FPS\r\n", 0, fx_fps, primitive[current_demo], 1, fb_fps);
-        printf("%d %s per second, FB %d FPS\r\n", (uint32_t)fx_fps, primitive[current_demo], (uint32_t)fb_fps);
-
-        current_demo = (current_demo + 1) % 17;
-        hagl_clear_clip_window();
-        aps(APS_RESET);
-        drawn = 0;
-
-        vTaskDelay(pdMS_TO_TICKS(10000));
-    }
-
-    vTaskDelete(NULL);
-}
+static uint32_t irq_count = 0;
+static uint8_t switch_flag = 0;
+static uint8_t fps_flag = 0;
 
 void polygon_demo()
 {
@@ -337,8 +260,69 @@ void fill_round_rectangle_demo()
     hagl_fill_rounded_rectangle(x0, y0, x1, y1, r, colour);
 }
 
-void demo_task(void *params)
+void eclic_mtip_handler(void)
 {
+    /* Fire IRQ every two seconds. */
+    uint64_t now = SysTimer_GetLoadValue();
+    SysTimer_SetCompareValue(now + 2 * SOC_TIMER_FREQ);
+
+    /* Demo is changed every five IRQs. */
+    if (0 == (++irq_count % 5)) {
+        switch_flag = 1;
+    } else {
+        /* FPS and APS counters are updated on every IRQ. */
+        fps_flag = 1;
+    }
+
+}
+
+void systimer_init()
+{
+    uint64_t now = SysTimer_GetLoadValue();
+    uint64_t future = now + 2 * SOC_TIMER_FREQ;
+
+    printf("Init and start timer.\n\r");
+
+    ECLIC_Register_IRQ(
+        SysTimer_IRQn, ECLIC_NON_VECTOR_INTERRUPT, ECLIC_LEVEL_TRIGGER,
+        1, 0,
+        eclic_mtip_handler
+    );
+
+    __enable_irq();
+
+
+    SysTimer_SetCompareValue(future);
+}
+
+
+void main()
+{
+    uint16_t color = hagl_color(0, 255, 0);
+    wchar_t message[32];
+
+    printf("Hello\r\n");
+
+    systimer_init();
+
+    // uint8_t *ptr = malloc(160 * 80 * 2);
+
+    // if (NULL == ptr) {
+    //     printf("Malloc failed\r\n");
+    // } else {
+    //     printf("Malloc OK\r\n");
+    // }
+
+    bb = hagl_init();
+    if (bb) {
+        printf("Back buffer: %dx%dx%d\r\n", bb->width, bb->height, bb->depth);
+    } else {
+        printf("No back buffer\r\n");
+    }
+
+    hagl_clear_screen();
+    hagl_set_clip_window(0, 20, DISPLAY_WIDTH - 1, DISPLAY_HEIGHT - 21);
+
     void (*demo[17]) ();
 
     demo[0] = rgb_demo;
@@ -359,41 +343,32 @@ void demo_task(void *params)
     demo[15] = put_character_demo;
     demo[16] = put_text_demo;
 
+    switch_flag = 1;
+
     while (1) {
-        //current_demo = 16;
+
         (*demo[current_demo])();
         drawn++;
+
+        if (switch_flag) {
+            switch_flag = 0;
+            printf("%d %s per second, FB %d FPS\r\n", (uint32_t)fx_fps, primitive[current_demo], (uint32_t)fb_fps);
+            current_demo = (current_demo + 1) % 17;
+            fx_fps = aps(APS_RESET);
+            drawn = 0;
+
+        }
+
+        if (fps_flag) {
+            fps_flag = 0;
+
+            fx_fps = aps(drawn);
+            drawn = 0;
+
+            swprintf(message,  sizeof(message), L"%.*f APS       ", 0, fx_fps);
+            hagl_set_clip_window(0, 0, DISPLAY_WIDTH - 1, DISPLAY_HEIGHT - 1);
+            hagl_put_text(message, 8, 4, color, font6x9);
+            hagl_set_clip_window(0, 20, DISPLAY_WIDTH - 1, DISPLAY_HEIGHT - 21);
+        }
     }
-
-
-    vTaskDelete(NULL);
-}
-
-void main()
-{
-    printf("Hello\r\n");
-    bb = hagl_init();
-    if (bb) {
-        printf("Back buffer: %dx%dx%d\r\n", bb->width, bb->height, bb->depth);
-    } else {
-        printf("No back buffer\r\n");
-
-    }
-
-    hagl_clear_screen();
-    hagl_set_clip_window(0, 20, DISPLAY_WIDTH - 1, DISPLAY_HEIGHT - 21);
-    mutex = xSemaphoreCreateMutex();
-
-    if (NULL != mutex) {
-#ifdef HAGL_HAL_USE_BUFFERING
-        xTaskCreate(framebuffer_task, "Framebuffer", 256, NULL, 1, NULL);
-#endif
-        xTaskCreate(demo_task, "Demo", 1152, NULL, 1, NULL);
-        xTaskCreate(fps_task, "FPS", 256, NULL, 2, NULL);
-        xTaskCreate(switch_task, "Switch", 128, NULL, 2, NULL);
-    } else {
-        printf("Not mutex?\r\n");
-    }
-
-    vTaskStartScheduler();
 }
